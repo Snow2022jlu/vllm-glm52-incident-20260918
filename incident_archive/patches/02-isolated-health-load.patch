@@ -1,0 +1,554 @@
+diff --git a/vllm/entrypoints/cli/serve.py b/vllm/entrypoints/cli/serve.py
+--- a/vllm/entrypoints/cli/serve.py
++++ b/vllm/entrypoints/cli/serve.py
+@@ -2,6 +2,7 @@
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
+ import argparse
++from vllm.entrypoints.serve.instrumentator.isolated_observability import enabled as observation_enabled, observation_session
+ import signal
+ import time
+ 
+@@ -52,6 +53,8 @@
+         if hasattr(args, "model_tag") and args.model_tag is not None:
+             args.model = args.model_tag
+ 
++        if observation_enabled() and getattr(args, "grpc", False):
++            raise ValueError("Isolated observation requires the Python HTTP frontend")
+         if getattr(args, "grpc", False):
+             from vllm.entrypoints.grpc_server import serve_grpc
+ 
+@@ -140,16 +143,17 @@
+             )
+             args.api_server_count = 1
+ 
+-        if is_multi_port:
+-            run_dp_supervisor(args)
+-        elif args.api_server_count < 1:
+-            run_headless(args)
+-        elif args.api_server_count > 1 or rust_frontend_path:
+-            run_multi_api_server(args)
+-        else:
+-            # Single API server (this process).
+-            args.api_server_count = None
+-            uvloop.run(run_server(args))
++        with observation_session(args):
++            if is_multi_port:
++                run_dp_supervisor(args)
++            elif args.api_server_count < 1:
++                run_headless(args)
++            elif args.api_server_count > 1 or rust_frontend_path:
++                run_multi_api_server(args)
++            else:
++                # Single API server (this process).
++                args.api_server_count = None
++                uvloop.run(run_server(args))
+ 
+     def validate(self, args: argparse.Namespace) -> None:
+         validate_parsed_serve_args(args)
+diff --git a/vllm/entrypoints/launcher.py b/vllm/entrypoints/launcher.py
+--- a/vllm/entrypoints/launcher.py
++++ b/vllm/entrypoints/launcher.py
+@@ -2,6 +2,7 @@
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
+ import asyncio
++from vllm.entrypoints.serve.instrumentator.isolated_observability import start_api_pulse
+ import contextlib
+ import signal
+ import socket
+@@ -92,6 +93,7 @@
+ 
+     loop = asyncio.get_running_loop()
+ 
++    observation_task = start_api_pulse(server, app.state.engine_client)
+     watchdog_task = loop.create_task(watchdog_loop(server, app.state.engine_client))
+     server_task = loop.create_task(server.serve(sockets=[sock] if sock else None))
+ 
+@@ -165,6 +167,9 @@
+     finally:
+         shutdown_task.cancel()
+         watchdog_task.cancel()
++        if observation_task is not None:
++            observation_task.cancel()
++            await asyncio.gather(observation_task, return_exceptions=True)
+ 
+ 
+ async def watchdog_loop(server: uvicorn.Server, engine: EngineClient):
+diff --git a/vllm/entrypoints/serve/instrumentator/isolated_observability.py b/vllm/entrypoints/serve/instrumentator/isolated_observability.py
+new file mode 100644
+--- /dev/null
++++ b/vllm/entrypoints/serve/instrumentator/isolated_observability.py
+@@ -0,0 +1,425 @@
++"""Bounded, process-isolated, local-rank observability for the pinned vLLM image."""
++
++from __future__ import annotations
++
++import argparse
++import asyncio
++import contextlib
++import json
++import logging
++import math
++import os
++import queue
++import re
++import signal
++import subprocess
++import sys
++import tempfile
++import threading
++import time
++import uuid
++from http.server import BaseHTTPRequestHandler, HTTPServer
++from pathlib import Path
++from socketserver import ThreadingMixIn
++
++
++PROTOCOL = "vllm-isolated-observability-v1"
++LOG = logging.getLogger(__name__)
++INTERVAL = 0.25
++MAX_BYTES = 65536
++METRICS = {
++    "running": "vllm:num_requests_running",
++    "waiting": "vllm:num_requests_waiting",
++    "kv_usage": "vllm:kv_cache_usage_perc",
++    "prefill_miss_requests": "vllm:prefill_cache_miss_requests",
++    "prefill_miss_tokens": "vllm:prefill_cache_miss_tokens",
++    "prefill_pending_requests": "vllm:prefill_cache_pending_requests",
++    "generation_tokens": "vllm:generation_tokens_total",
++    "preemptions": "vllm:num_preemptions_total",
++}
++
++
++def enabled():
++    value = os.environ.get("VLLM_ISOLATED_OBSERVABILITY", "0")
++    if value not in {"0", "1"}:
++        raise ValueError("VLLM_ISOLATED_OBSERVABILITY must be 0 or 1")
++    return value == "1"
++
++
++def process_identity(pid):
++    try:
++        fields = Path(f"/proc/{int(pid)}/stat").read_text().rpartition(")")[2].split()
++        return None if fields[0] in {"Z", "X"} else fields[19]
++    except (OSError, ValueError, IndexError):
++        return None
++
++
++def atomic_json(path, value):
++    content = json.dumps(value, allow_nan=False, separators=(",", ":")).encode()
++    if len(content) > MAX_BYTES:
++        raise ValueError("Observation exceeds the bounded snapshot size")
++    temporary = path.with_suffix(".tmp")
++    with temporary.open("wb") as handle:
++        handle.write(content)
++    os.replace(temporary, path)
++
++
++def read_json(path):
++    with path.open("rb") as handle:
++        content = handle.read(MAX_BYTES + 1)
++    if len(content) > MAX_BYTES:
++        raise ValueError("Observation exceeds the bounded snapshot size")
++    return json.loads(content)
++
++
++class SnapshotWriter:
++    def __init__(self, kind, identifier):
++        self.directory = Path(os.environ["VLLM_OBSERVABILITY_DIRECTORY"])
++        self.config = read_json(self.directory / "config.json")
++        self.path = self.directory / f"{kind}-{identifier}.json"
++        self.pid = os.getpid()
++        self.start = process_identity(self.pid)
++        self.pending = queue.Queue(maxsize=1)
++        self.thread = threading.Thread(target=self._write, daemon=True)
++        self.thread.start()
++
++    def submit(self, data):
++        snapshot = dict(data, protocol=PROTOCOL, epoch=self.config["epoch"],
++                        run_id=self.config["run_id"], pid=self.pid, start=self.start,
++                        sampled_at=time.monotonic())
++        try:
++            self.pending.put_nowait(snapshot)
++        except queue.Full:
++            with contextlib.suppress(queue.Empty):
++                self.pending.get_nowait()
++            with contextlib.suppress(queue.Full):
++                self.pending.put_nowait(snapshot)
++
++    def _write(self):
++        warned = False
++        while True:
++            snapshot = self.pending.get()
++            try:
++                atomic_json(self.path, snapshot)
++            except (OSError, ValueError):
++                if not warned:
++                    LOG.exception("Observation publication failed; freshness will expire")
++                    warned = True
++
++
++class CoreObserver:
++    def __init__(self, engine):
++        self.rank = engine.engine_index
++        self.writer = SnapshotWriter("core", self.rank)
++        self.last_sample = -math.inf
++        self.generation_tokens = 0
++        self.preemptions = 0
++
++    def observe(self, engine, outputs):
++        for batch in (outputs or {}).values():
++            for output in batch.outputs:
++                self.generation_tokens += len(output.new_token_ids)
++                self.preemptions += sum(
++                    int(event.type) == 3 for event in (output.events or ())
++                )
++        now = time.monotonic()
++        if now - self.last_sample < INTERVAL:
++            return
++        self.last_sample = now
++        scheduler = engine.scheduler
++        misses, tokens, pending = scheduler._get_prefill_cache_pressure_stats()
++        capacity = len(scheduler.waiting)
++        deferred = len(scheduler.skipped_waiting)
++        self.writer.submit({
++            "rank": self.rank,
++            "ready": bool(engine.is_running()),
++            "metrics": {
++                "running": len(scheduler.running),
++                "waiting": capacity + deferred,
++                "waiting_capacity": capacity,
++                "waiting_deferred": deferred,
++                "kv_usage": scheduler.get_kv_cache_usage(),
++                "prefill_miss_requests": misses,
++                "prefill_miss_tokens": tokens,
++                "prefill_pending_requests": pending,
++                "generation_tokens": self.generation_tokens,
++                "preemptions": self.preemptions,
++            },
++        })
++
++
++def observe_core(engine, outputs=None):
++    if not enabled():
++        return
++    try:
++        observer = getattr(engine, "_isolated_core_observer", None)
++        if observer is None:
++            observer = CoreObserver(engine)
++            engine._isolated_core_observer = observer
++        observer.observe(engine, outputs)
++    except Exception:
++        if not getattr(engine, "_isolated_observer_warned", False):
++            LOG.exception("Core observation failed; no synthetic healthy sample emitted")
++            engine._isolated_observer_warned = True
++
++
++async def api_pulse(server, engine):
++    writer = SnapshotWriter("api", os.getpid())
++    try:
++        while True:
++            writer.submit({"ready": bool(server.started and not server.should_exit
++                                         and not engine.errored)})
++            await asyncio.sleep(INTERVAL)
++    finally:
++        writer.submit({"ready": False})
++
++
++def start_api_pulse(server, engine):
++    return asyncio.create_task(api_pulse(server, engine)) if enabled() else None
++
++
++def valid_metrics(metrics):
++    expected = set(METRICS) | {"waiting_capacity", "waiting_deferred"}
++    if not isinstance(metrics, dict) or set(metrics) != expected:
++        return False
++    for name, value in metrics.items():
++        if isinstance(value, bool) or not isinstance(value, (int, float)):
++            return False
++        if not math.isfinite(value) or value < 0:
++            return False
++        if name != "kv_usage" and int(value) != value:
++            return False
++    return (metrics["kv_usage"] <= 1
++            and metrics["waiting"] == metrics["waiting_capacity"] + metrics["waiting_deferred"])
++
++
++class ObservationState:
++    def __init__(self, directory):
++        self.directory = Path(directory)
++        self.config = read_json(self.directory / "config.json")
++
++    def snapshot(self, path, maximum_age):
++        try:
++            sample = read_json(path)
++            age = time.monotonic() - sample["sampled_at"]
++            fresh = (sample["protocol"] == PROTOCOL
++                     and sample["epoch"] == self.config["epoch"]
++                     and sample["run_id"] == self.config["run_id"]
++                     and sample["start"] is not None
++                     and process_identity(sample["pid"]) == sample["start"]
++                     and math.isfinite(age) and 0 <= age <= maximum_age)
++            sample["age_seconds"] = age
++            return sample if fresh else None
++        except (OSError, ValueError, KeyError, TypeError):
++            return None
++
++    def report(self):
++        config = self.config
++        live = bool(config["parent_start"]) and process_identity(config["parent_pid"]) == config["parent_start"]
++        reasons = []
++        cores = {}
++        validity = [config["core_max_age"]]
++        unexpected = {path.name for path in self.directory.glob("core-*.json")} - {
++            f"core-{rank}.json" for rank in config["ranks"]
++        }
++        if unexpected:
++            reasons.append("unexpected_core_rank")
++        for rank in config["ranks"]:
++            sample = self.snapshot(self.directory / f"core-{rank}.json", config["core_max_age"])
++            if (sample is None or sample.get("rank") != rank
++                    or not valid_metrics(sample.get("metrics"))):
++                reasons.append(f"core_{rank}_missing_stale_or_invalid")
++            else:
++                cores[str(rank)] = sample
++                validity.append(config["core_max_age"] - sample["age_seconds"])
++                if sample.get("ready") is not True:
++                    reasons.append(f"core_{rank}_not_running")
++        paths = list(self.directory.glob("api-*.json"))
++        api_ready = []
++        for path in paths:
++            sample = self.snapshot(path, config["api_max_age"])
++            api_ready.append(sample is not None and sample.get("ready") is True
++                             and path.name == f'api-{sample["pid"]}.json')
++            if sample is not None:
++                validity.append(config["api_max_age"] - sample["age_seconds"])
++        if len(paths) != config["api_count"] or not all(api_ready):
++            reasons.append("api_missing_stale_or_unready")
++        if not live:
++            reasons.append("launcher_not_alive")
++        load_fresh = live and not unexpected and len(cores) == len(config["ranks"])
++        return {
++            "protocol": PROTOCOL, "scope": "local_pod", "epoch": config["epoch"],
++            "run_id": config["run_id"], "model": config["model"], "role": config["role"],
++            "expected_ranks": config["ranks"], "expected_api_count": config["api_count"],
++            "live": live, "ready": not reasons, "load_fresh": load_fresh,
++            "core_max_age_seconds": config["core_max_age"],
++            "ready_valid_for_seconds": min(validity) if not reasons else 0.0,
++            "reasons": reasons, "cores": cores,
++        }
++
++
++def prometheus(report):
++    lines = [f'vllm_observer_ready {int(report["ready"])}',
++             f'vllm_observer_load_fresh {int(report["load_fresh"])}']
++    if report["load_fresh"]:
++        for rank, sample in sorted(report["cores"].items(), key=lambda item: int(item[0])):
++            label = f'engine="{rank}"'
++            lines.append(f'vllm_observer_sample_age_seconds{{{label}}} {sample["age_seconds"]}')
++            for key, name in METRICS.items():
++                lines.append(f'{name}{{{label}}} {sample["metrics"][key]}')
++            for reason in ("capacity", "deferred"):
++                value = sample["metrics"][f"waiting_{reason}"]
++                lines.append(f'vllm:num_requests_waiting_by_reason{{{label},reason="{reason}"}} {value}')
++    return ("\n".join(lines) + "\n").encode()
++
++
++class BoundedHTTPServer(ThreadingMixIn, HTTPServer):
++    daemon_threads = True
++    block_on_close = False
++    request_queue_size = 32
++    timeout = 0.2
++
++    def __init__(self, *args, **kwargs):
++        self.slots = threading.BoundedSemaphore(8)
++        super().__init__(*args, **kwargs)
++
++    def get_request(self):
++        connection, address = super().get_request()
++        connection.settimeout(0.25)
++        return connection, address
++
++    def process_request(self, request, client_address):
++        if not self.slots.acquire(blocking=False):
++            self.shutdown_request(request)
++            return
++        try:
++            super().process_request(request, client_address)
++        except Exception:
++            self.slots.release()
++            raise
++
++    def process_request_thread(self, request, client_address):
++        try:
++            super().process_request_thread(request, client_address)
++        finally:
++            self.slots.release()
++
++
++def serve(directory, host, port):
++    state = ObservationState(directory)
++    stopping = threading.Event()
++    for signum in (signal.SIGTERM, signal.SIGINT):
++        signal.signal(signum, lambda *_args: stopping.set())
++
++    class Handler(BaseHTTPRequestHandler):
++        def do_GET(self):
++            if self.path not in {"/livez", "/readyz", "/health", "/load", "/metrics"}:
++                self.send_error(404)
++                return
++            report = state.report()
++            if self.path == "/livez":
++                good = report["live"]
++            elif self.path in {"/health", "/readyz"}:
++                good = report["ready"]
++            else:
++                good = report["load_fresh"]
++            metrics = self.path == "/metrics"
++            body = prometheus(report) if metrics else json.dumps(report, allow_nan=False).encode()
++            self.send_response(200 if good else 503)
++            self.send_header("Content-Type", "text/plain; version=0.0.4" if metrics else "application/json")
++            self.send_header("Content-Length", str(len(body)))
++            self.send_header("Cache-Control", "no-store")
++            self.end_headers()
++            with contextlib.suppress(BrokenPipeError, ConnectionResetError, TimeoutError):
++                self.wfile.write(body)
++
++        def log_message(self, *_args):
++            pass
++
++    with BoundedHTTPServer((host, port), Handler) as server:
++        atomic_json(Path(directory) / "observer.json", {"port": server.server_port, "pid": os.getpid()})
++        while not stopping.is_set():
++            if process_identity(state.config["parent_pid"]) != state.config["parent_start"]:
++                break
++            server.handle_request()
++
++
++def session_config(args):
++    required = ("EPOCH", "MODEL", "ROLE", "RANKS")
++    values = {name: os.environ.get(f"VLLM_OBSERVABILITY_{name}", "") for name in required}
++    if any(not value for value in values.values()):
++        raise ValueError("Observer requires explicit EPOCH, MODEL, ROLE and local RANKS")
++    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", values["EPOCH"]):
++        raise ValueError("Invalid observation epoch")
++    if values["ROLE"] not in {"prefill", "decode"}:
++        raise ValueError("Observer role must be prefill or decode")
++    ranks = [int(value) for value in values["RANKS"].split(",")]
++    local_size = args.data_parallel_size_local or args.data_parallel_size
++    start_rank = args.data_parallel_start_rank
++    if start_rank is None:
++        start_rank = args.data_parallel_rank or 0
++    if ranks != list(range(start_rank, start_rank + local_size)):
++        raise ValueError("Observer rank list does not match this process's local DP group")
++    if not ranks or min(ranks) < 0 or max(ranks) >= args.data_parallel_size:
++        raise ValueError("Observer ranks are outside the configured DP world")
++    if (args.disable_log_stats or args.data_parallel_multi_port_external_lb
++            or getattr(args, "enable_elastic_ep", False)
++            or os.environ.get("VLLM_USE_RUST_FRONTEND", "0") == "1"):
++        raise ValueError("Observer requires fixed-world Python frontend with log stats enabled")
++    api_age = float(os.environ.get("VLLM_OBSERVABILITY_API_MAX_AGE", "3"))
++    core_age = float(os.environ.get("VLLM_OBSERVABILITY_CORE_MAX_AGE", "10"))
++    if any(not math.isfinite(value) or not INTERVAL < value <= 300 for value in (api_age, core_age)):
++        raise ValueError("Observation ages must be finite, >0.25 and <=300 seconds")
++    return {
++        "protocol": PROTOCOL, "epoch": values["EPOCH"], "model": values["MODEL"],
++        "role": values["ROLE"], "ranks": ranks, "run_id": uuid.uuid4().hex,
++        "api_count": args.api_server_count, "api_max_age": api_age, "core_max_age": core_age,
++        "parent_pid": os.getpid(), "parent_start": process_identity(os.getpid()),
++    }
++
++
++@contextlib.contextmanager
++def observation_session(args):
++    if not enabled():
++        yield
++        return
++    if os.environ.get("VLLM_OBSERVABILITY_DIRECTORY"):
++        raise ValueError("Do not reuse another observer session's private directory")
++    config = session_config(args)
++    port = int(os.environ.get("VLLM_OBSERVABILITY_PORT", "18081"))
++    host = os.environ.get("VLLM_OBSERVABILITY_HOST", "127.0.0.1")
++    if not 1 <= port <= 65535:
++        raise ValueError("Invalid observer port")
++    with tempfile.TemporaryDirectory(prefix="vllm-observer-", dir="/tmp") as directory:
++        atomic_json(Path(directory) / "config.json", config)
++        os.environ["VLLM_OBSERVABILITY_DIRECTORY"] = directory
++        process = None
++        try:
++            process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()),
++                                        "serve", "--directory", directory,
++                                        "--host", host, "--port", str(port)])
++            deadline = time.monotonic() + 10
++            while not (Path(directory) / "observer.json").exists():
++                if process.poll() is not None or time.monotonic() > deadline:
++                    raise RuntimeError("Isolated observation process failed to bind")
++                time.sleep(0.05)
++            yield
++        finally:
++            os.environ.pop("VLLM_OBSERVABILITY_DIRECTORY", None)
++            if process is not None and process.poll() is None:
++                process.terminate()
++                process.wait(timeout=3)
++
++
++def main():
++    parser = argparse.ArgumentParser()
++    parser.add_argument("command", choices=["serve"])
++    parser.add_argument("--directory", required=True)
++    parser.add_argument("--host", default="127.0.0.1")
++    parser.add_argument("--port", type=int, default=18081)
++    args = parser.parse_args()
++    serve(args.directory, args.host, args.port)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/vllm/v1/engine/core.py b/vllm/v1/engine/core.py
+--- a/vllm/v1/engine/core.py
++++ b/vllm/v1/engine/core.py
+@@ -3,6 +3,7 @@
+ import gc
+ import os
+ import queue
++from vllm.entrypoints.serve.instrumentator.isolated_observability import enabled as observation_enabled, observe_core
+ import signal
+ import threading
+ import time
+@@ -1400,9 +1401,11 @@
+ 
+     def _process_input_queue(self):
+         """Exits when an engine step needs to be performed."""
++        observe_core(self)
+ 
+         waited = False
+         while not self.has_work() and self.is_running():
++            observe_core(self)
+             # Notify callbacks waiting for engine to become idle.
+             self._notify_idle_state_callbacks()
+             if self.input_queue.empty():
+@@ -1414,9 +1417,14 @@
+                     waited = True
+             block = self.process_input_queue_block
+             try:
+-                req = self.input_queue.get(block=block)
++                req = self.input_queue.get(
++                    block=block,
++                    timeout=0.25 if block and observation_enabled() else None,
++                )
+                 self._handle_client_request(*req)
+             except queue.Empty:
++                if block and observation_enabled():
++                    continue
+                 break
+             if not block:
+                 break
+@@ -1434,6 +1442,7 @@
+ 
+         # Step the engine core.
+         outputs, model_executed = self.step_fn()
++        observe_core(self, outputs)
+         # Put EngineCoreOutputs into the output queue.
+         for output in outputs.items() if outputs else ():
+             self.output_queue.put_nowait(output)

@@ -1,0 +1,97 @@
+{
+  "candidate": "p12-prefill-pressure-vllm0280",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "8f2e323e01da7e7c7f9c37bd40e0618d459b743346feb595c800bbdb055ac003"
+    },
+    {
+      "path": "apply_p12.py",
+      "sha256": "cdc6183798614babbda8cdcdbc08ca9942f532ff319829cbf8c83f6147db1e11"
+    },
+    {
+      "path": "build_candidate.py",
+      "sha256": "465ad391320b6e8e8046f7ab653c720c3d379e0cae7e3d7ceb88fe3dcb2570b6"
+    },
+    {
+      "path": "collector-p12.patch",
+      "sha256": "6c77633c7c9b4811efd3b447620e7773d2121e0883354113d9048d4eb61dde24"
+    },
+    {
+      "path": "manifest.json",
+      "sha256": "5c76361f448ca8065b754224043dde40fa5ee40b7e8fba72996173553ba384ba"
+    },
+    {
+      "path": "payload/static_dp_registrar.py",
+      "sha256": "601b583b4b42ec3d662d9d594feceef04f9a3bf1534d64f316686f0930c3c5ef"
+    },
+    {
+      "path": "payload/vllm/v1/core/sched/scheduler.py",
+      "sha256": "4aa9a047e566966788d1f828c62e5d54e6693192fe1f12a3c0d69f019d096853"
+    },
+    {
+      "path": "payload/vllm/v1/metrics/loggers.py",
+      "sha256": "9301e7d45775764885f7ce0abba1ee1c47da47bd995366f6c05915a41c882441"
+    },
+    {
+      "path": "payload/vllm/v1/metrics/stats.py",
+      "sha256": "7944c6b82eb02a673b524a2b863b6d38bf6c75357a308c5b98d922a03755edd2"
+    },
+    {
+      "path": "payload/vllm/v1/request.py",
+      "sha256": "271384d017dfb36534951bd407a2cdeeb3fa43823db72e092cc8664ec52ff0ca"
+    },
+    {
+      "path": "source-manifest.json",
+      "sha256": "c2c208968794e3e4165f719048f4b7ff7f7b9bef088440321d91c3155e55024c"
+    },
+    {
+      "path": "sources/collectors/r106.py",
+      "sha256": "771f57ea78ebe8b8a66ac6d0a51acfa60bc3e6c9e47cd71c7c43eb608f4494ce"
+    },
+    {
+      "path": "sources/installer.py",
+      "sha256": "e0d4449b67000fa1a2fceec5c4210fd6a391b54060e3d335cad3b5e36ea43f98"
+    },
+    {
+      "path": "sources/vllm-0.28.0/vllm/v1/core/sched/scheduler.py",
+      "sha256": "4b79ab760c3864af6838d555c01335deea3aac97c9be2be415fa0e5dab32f07e"
+    },
+    {
+      "path": "sources/vllm-0.28.0/vllm/v1/metrics/loggers.py",
+      "sha256": "d5a91626cf79118f98ae6438c842cb30fc44ca14463c7e2af5871e3da8e51bcf"
+    },
+    {
+      "path": "sources/vllm-0.28.0/vllm/v1/metrics/stats.py",
+      "sha256": "7682d3086bf5395f163f423677485432ee2c035aada2f370c0f82b291e53ca47"
+    },
+    {
+      "path": "sources/vllm-0.28.0/vllm/v1/metrics/utils.py",
+      "sha256": "3146bb1215074a18067fda14df7664e341fffb073aaaaee735cd4f81ed3b1cf2"
+    },
+    {
+      "path": "sources/vllm-0.28.0/vllm/v1/request.py",
+      "sha256": "0287844f70eeaeb077d714e833a4b449a15e045a6516f8530182e357a5bec82f"
+    },
+    {
+      "path": "test-results.json",
+      "sha256": "1646e68f6daa75d22e782d2664db497d3d24f27be10ea15437ea432c2845fde1"
+    },
+    {
+      "path": "test_candidate.py",
+      "sha256": "45f42f040aa38799ad3caba1dae46631a07238ebac97271f69dec295b9edde76"
+    },
+    {
+      "path": "test_support.py",
+      "sha256": "eeecf96644a2fd5c7e76d938472b78302b3a94e51d47e93d65c7628a11e105fb"
+    },
+    {
+      "path": "v028-p12.patch",
+      "sha256": "3163a1dca62a65b34212a85eac70a57c02f8d3b64c632bc38c290da7107efa87"
+    },
+    {
+      "path": "validation.json",
+      "sha256": "7de58f44021af600829bbac624e0c19037428e852ca471053882fba77666b96d"
+    }
+  ]
+}

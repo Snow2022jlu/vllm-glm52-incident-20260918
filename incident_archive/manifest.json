@@ -1,0 +1,77 @@
+{
+  "purpose": "Historical vLLM source archive for the 2026-09-18 GLM-5.2 KV corruption incident",
+  "upstream_repository": "https://github.com/vllm-project/vllm",
+  "upstream_commit": "2cf0a6915ce544dc493a0990f2ea38d81601128a",
+  "vllm_version": "0.28.0",
+  "mooncake_distribution": "mooncake-transfer-engine-cuda13",
+  "mooncake_version": "0.3.13.post1",
+  "mooncake_store_so_sha256": "3e477eee78de13fb121650fc896cb5d7576ec43a3c56ba59a6608c64f0abf6df",
+  "mooncake_wheel_sha256": "155bcb1b02d07f4b78268641880ada0558abeac1e5db0624f879f35bba4c8cd6",
+  "official_base_image": "vllm/vllm-openai@sha256:2286e8533ca8b6bc777594bae30524f1426ba46ca21797524e06df6a94b06635",
+  "historical_deployment_image_digest": "sha256:aa5b05979e0c3cc4a7f3ee59748dcb222ac773e2d8ad6a6c95bbe2ea64d96f96",
+  "api_health_grace_seconds": 1800,
+  "h02_fixed": false,
+  "post_incident_mooncake_lifetime_fixes_included": false,
+  "runtime_files": {
+    "vllm/entrypoints/cli/serve.py": "11f525f1e76ccfb73954e0b7a09bcb8c6f7711edef6f3abad7ec136446433520",
+    "vllm/entrypoints/launcher.py": "0396468a760956d760e8c92a0f7f15ceaacd714e41616b2f2b91e6624e9b9401",
+    "vllm/entrypoints/serve/instrumentator/bounded_observability.py": "7a4ae208f08be12da990b9b4abbb67d4d7f7b2c896799870738a0eb52d09bd68",
+    "vllm/entrypoints/serve/instrumentator/compatible_native.py": "aa2118e25d0545c7be28e4002bfc0bfa631ce6a852b7fb943d30de4a0ecb606e",
+    "vllm/entrypoints/serve/instrumentator/compatible_runtime.py": "887f72fe007848aa8b8684a6fbbd3ec8efef9081433c179dd744c88171ffeeff",
+    "vllm/entrypoints/serve/instrumentator/compatible_state.py": "3e01c231441970d7eff5c86742327ebd8868aa8fd8ab1112fdf4a6a5bc5b76b2",
+    "vllm/entrypoints/serve/instrumentator/isolated_observability.py": "60c27f79d3f9cf414f98e80bdba8a732facd6e629366b3493ab5f1c85c6cc039",
+    "vllm/v1/core/sched/scheduler.py": "4aa9a047e566966788d1f828c62e5d54e6693192fe1f12a3c0d69f019d096853",
+    "vllm/v1/engine/core.py": "2196feda6513dd2c48213d7218aabf2a0aef60ce05c92d2ae42221f3ee9078ef",
+    "vllm/v1/metrics/loggers.py": "9301e7d45775764885f7ce0abba1ee1c47da47bd995366f6c05915a41c882441",
+    "vllm/v1/metrics/stats.py": "7944c6b82eb02a673b524a2b863b6d38bf6c75357a308c5b98d922a03755edd2",
+    "vllm/v1/request.py": "271384d017dfb36534951bd407a2cdeeb3fa43823db72e092cc8664ec52ff0ca"
+  },
+  "incident_source_files": {
+    "vllm/distributed/kv_transfer/kv_connector/v1/mooncake/store/coordinator.py": "8614504f08a1cc1c4176f427991351e8097ba10d10d69b06474b4cfa62d0667c",
+    "vllm/distributed/kv_transfer/kv_connector/v1/mooncake/store/data.py": "d54fcde0f7907d3ac136d079830d85b5f574abd1683c82edf7b9e8f7931df070",
+    "vllm/distributed/kv_transfer/kv_connector/v1/mooncake/store/scheduler.py": "6f3c783227623264be5d31e1476f52d033c5138ba12d5dfd9579bd479ed490cd",
+    "vllm/distributed/kv_transfer/kv_connector/v1/mooncake/store/worker.py": "099b17b65e3cdc6f6b3d814d60645e80f17d14639649d114d07128d7f979fd8a",
+    "vllm/distributed/kv_transfer/kv_connector/v1/multi_connector.py": "179853b7956bd6104307612c54b5685ccfe4217d6a4dc40df084b2b15b1db0ed",
+    "vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_worker.py": "4860f51b6ac3301c243794b7626b5536f6b0ec41204e426ee6b61bc0e1d0bdb7",
+    "vllm/distributed/kv_transfer/kv_connector/v1/nixl/pull_scheduler.py": "b258f9f544ebbb7bacfe7d7c2a5053d3b833ee2f58068be42fdff5e597f1802f",
+    "vllm/distributed/kv_transfer/kv_connector/v1/nixl/pull_worker.py": "507fe6bfd994b4b75a624397ffe198adbec18a6a8295f03612fb47bb55a7bf23",
+    "vllm/entrypoints/openai/chat_completion/protocol.py": "cb756e3d18e9061a2b306f305e10bd71d43f01ad1b236d0e9cbbb8756cd504dc",
+    "vllm/entrypoints/openai/chat_completion/serving.py": "a2440b6b76ad87de86bcf6fc7061ad5d02ab67c1c3c89ca7de3eeb29aa12aa2f",
+    "vllm/renderers/online_renderer.py": "0135c6ba5dcd837f605ac111ccfb84e391096df9fdbc853b0580ff0a0de30d43",
+    "vllm/sampling_params.py": "73e5bf250cb13803e4ce390407ae059b497898c8b81f9985d2b5c055d4db8f7d",
+    "vllm/utils/hashing.py": "89b4bd2bd246a5bfdcf00d766ea38a8182376aecfd6b6b7d5c47d96b1559243e",
+    "vllm/v1/attention/backends/mla/flashinfer_mla_sparse.py": "550079022e858952c37bfa1198dbb1c77884571af30eb4c2f1a8055cd6ca7b07",
+    "vllm/v1/core/block_pool.py": "ddee56dccb2208411b3a035918e917ce8f56a9858471e9ca12b420d5d79bc69c",
+    "vllm/v1/core/kv_cache_manager.py": "2d20c3d98845cfd8d88a2f66b8fc6402ea1fcfbee16879d2364a4a9e45b8fa47",
+    "vllm/v1/core/kv_cache_utils.py": "088f2201bee86fade694e78141b6e99a5cd0cdd23c5c7ab3526dd119f76e4aec",
+    "vllm/v1/core/sched/scheduler.py": "4aa9a047e566966788d1f828c62e5d54e6693192fe1f12a3c0d69f019d096853",
+    "vllm/v1/engine/input_processor.py": "f9a7946a16acc2374ff2bdfc22f212cb43461d9ef4d99c5e19a536339f11212f",
+    "vllm/v1/request.py": "271384d017dfb36534951bd407a2cdeeb3fa43823db72e092cc8664ec52ff0ca"
+  },
+  "publisher": {
+    "path": "incident_archive/runtime/static_dp_registrar.py",
+    "sha256": "34eaa09abc51ded89f9d7cf4446d69f98ee3fda42ea827e3f63274fd4408f459"
+  },
+  "patch_series": [
+    {
+      "patch": "incident_archive/patches/01-p12-prefill-pressure.patch",
+      "sha256": "07b2d808a0ea04cfb0fd134159f504a0e8dd5838ca1f0b4dcb984b801539ef3b"
+    },
+    {
+      "patch": "incident_archive/patches/02-isolated-health-load.patch",
+      "sha256": "d6d87d3c5682f2570ac0966c296afecd7c02da2f3d15f60a34a2fad30f59c7e9"
+    },
+    {
+      "patch": "incident_archive/patches/03-compatible-health-metrics.patch",
+      "sha256": "ebc195ca0cbaf3ffc22f81e055687c907790aa77e601874d9b30ed046cebc82f"
+    },
+    {
+      "patch": "incident_archive/patches/04-bounded-health-metrics.patch",
+      "sha256": "928ac36adeaae571753aaacee2b0ed8df9225f361229b9356e88a01150b340d5"
+    }
+  ],
+  "export_validation": {
+    "runtime_files_verified": 12,
+    "incident_source_files_verified": 20
+  }
+}

@@ -2,6 +2,8 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import argparse
+from vllm.entrypoints.serve.instrumentator.isolated_observability import enabled as observation_enabled
+from vllm.entrypoints.serve.instrumentator.compatible_runtime import observation_session
 import signal
 import time
 
@@ -52,6 +54,8 @@ class ServeSubcommand(CLISubcommand):
         if hasattr(args, "model_tag") and args.model_tag is not None:
             args.model = args.model_tag
 
+        if observation_enabled() and getattr(args, "grpc", False):
+            raise ValueError("Isolated observation requires the Python HTTP frontend")
         if getattr(args, "grpc", False):
             from vllm.entrypoints.grpc_server import serve_grpc
 
@@ -140,16 +144,17 @@ class ServeSubcommand(CLISubcommand):
             )
             args.api_server_count = 1
 
-        if is_multi_port:
-            run_dp_supervisor(args)
-        elif args.api_server_count < 1:
-            run_headless(args)
-        elif args.api_server_count > 1 or rust_frontend_path:
-            run_multi_api_server(args)
-        else:
-            # Single API server (this process).
-            args.api_server_count = None
-            uvloop.run(run_server(args))
+        with observation_session(args):
+            if is_multi_port:
+                run_dp_supervisor(args)
+            elif args.api_server_count < 1:
+                run_headless(args)
+            elif args.api_server_count > 1 or rust_frontend_path:
+                run_multi_api_server(args)
+            else:
+                # Single API server (this process).
+                args.api_server_count = None
+                uvloop.run(run_server(args))
 
     def validate(self, args: argparse.Namespace) -> None:
         validate_parsed_serve_args(args)

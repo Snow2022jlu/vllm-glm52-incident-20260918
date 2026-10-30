@@ -1,0 +1,30 @@
+--- a/static_dp_registrar.py
++++ b/static_dp_registrar.py
+@@ -163,23 +163,24 @@
+             "vllm:prefill_cache_miss_requests",
+             args.ranks,
+             integer=True,
+-            fill_missing_zero=True,
++            fill_missing_zero=False,
+         )
+         miss_tokens = rank_metric(
+             prefill_metrics,
+             "vllm:prefill_cache_miss_tokens",
+             args.ranks,
+             integer=True,
+-            fill_missing_zero=True,
++            fill_missing_zero=False,
+         )
+         pending_requests = rank_metric(
+             prefill_metrics,
+             "vllm:prefill_cache_pending_requests",
+             args.ranks,
+             integer=True,
+-            fill_missing_zero=True,
++            fill_missing_zero=False,
+         )
+     except Exception:
++        miss_requests = miss_tokens = pending_requests = None
+         LOG.exception("Prefill metrics scrape failed")
+     try:
+         decode_metrics = fetch_text(args.decode_metrics_url)

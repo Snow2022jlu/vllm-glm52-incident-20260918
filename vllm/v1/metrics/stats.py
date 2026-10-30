@@ -191,6 +191,11 @@ class SchedulerStats:
     num_waiting_reqs: int = 0  # length of the "waiting" request queue
     num_skipped_waiting_reqs: int = 0  # length of the "skipped waiting" queue
 
+    # Current Prefill cache-pressure on a KV producer. A consumer reports 0.
+    prefill_cache_miss_requests: int = 0
+    prefill_cache_miss_tokens: int = 0
+    prefill_cache_pending_requests: int = 0
+
     # These are used for internal DP load-balancing.
     step_counter: int = 0
     current_wave: int = 0

@@ -134,6 +134,9 @@ class Scheduler(SchedulerInterface):
         # KVConnectorBase_V1.requires_kv_delivery.
         self.requires_kv_delivery = False
         kv_transfer_config = self.vllm_config.kv_transfer_config
+        self.report_prefill_cache_pressure = bool(
+            kv_transfer_config is not None and kv_transfer_config.is_kv_producer
+        )
         if kv_transfer_config is not None:
             assert not self.is_encoder_decoder, (
                 "Encoder-decoder models are not currently supported with KV connectors"
@@ -809,6 +812,8 @@ class Scheduler(SchedulerInterface):
 
                 # Get already-cached tokens.
                 if request.num_computed_tokens == 0:
+                    request.prefill_cache_lookup_complete = False
+                    request.prefill_cached_tokens = 0
                     did_prefix_cache_lookup = True
                     (
                         new_computed_blocks,
@@ -882,6 +887,8 @@ class Scheduler(SchedulerInterface):
                         num_new_local_computed_tokens + num_external_computed_tokens
                     )
                     assert num_computed_tokens <= request.num_tokens
+                    request.prefill_cache_lookup_complete = True
+                    request.prefill_cached_tokens = num_computed_tokens
 
                     # Skip request with pending mm encoding prefetches
                     if (
@@ -1354,6 +1361,8 @@ class Scheduler(SchedulerInterface):
         self._inflight_prefills.discard(request)
         request.status = RequestStatus.PREEMPTED
         request.num_computed_tokens = 0
+        request.prefill_cache_lookup_complete = False
+        request.prefill_cached_tokens = 0
         if request.spec_token_ids:
             request.spec_token_ids = []
         # Async scheduling: mark all in-flight output as stale. Its tokens are
@@ -2604,10 +2613,18 @@ class Scheduler(SchedulerInterface):
         connector_stats_payload = (
             kv_connector_stats.data if kv_connector_stats else None
         )
+        (
+            prefill_cache_miss_requests,
+            prefill_cache_miss_tokens,
+            prefill_cache_pending_requests,
+        ) = self._get_prefill_cache_pressure_stats()
         return SchedulerStats(
             num_running_reqs=len(self.running),
             num_waiting_reqs=len(self.waiting),
             num_skipped_waiting_reqs=len(self.skipped_waiting),
+            prefill_cache_miss_requests=prefill_cache_miss_requests,
+            prefill_cache_miss_tokens=prefill_cache_miss_tokens,
+            prefill_cache_pending_requests=prefill_cache_pending_requests,
             kv_cache_usage=self.kv_cache_manager.usage,
             prefix_cache_stats=prefix_cache_stats,
             connector_prefix_cache_stats=connector_prefix_cache_stats,
@@ -2617,6 +2634,45 @@ class Scheduler(SchedulerInterface):
             cudagraph_stats=cudagraph_stats,
             perf_stats=perf_stats,
         )
+
+    def _get_prefill_cache_pressure_stats(self) -> tuple[int, int, int]:
+        """Return current uncached Prefill pressure for this DP-rank.
+
+        The scan is intentionally side-effect free: it never starts a local or
+        external cache lookup. ``num_computed_tokens`` advances optimistically
+        at scheduling time, so in-flight tokens are subtracted to keep them in
+        the remaining-work total until the model step completes.
+        """
+        if not self.report_prefill_cache_pressure:
+            return 0, 0, 0
+
+        miss_requests = 0
+        miss_tokens = 0
+        pending_requests = 0
+        for request in self.requests.values():
+            if request.is_finished() or request.prefill_stats is None:
+                continue
+            if not request.prefill_cache_lookup_complete:
+                pending_requests += 1
+                continue
+
+            settled_tokens = max(
+                0, request.num_computed_tokens - request.num_in_flight_tokens
+            )
+            # Before admission, cache hits are known but have not yet been
+            # copied into request.num_computed_tokens.
+            if (
+                settled_tokens == 0
+                and request.status in (RequestStatus.WAITING, RequestStatus.PREEMPTED)
+            ):
+                settled_tokens = request.prefill_cached_tokens
+
+            remaining_tokens = max(0, request.num_prompt_tokens - settled_tokens)
+            if remaining_tokens:
+                miss_requests += 1
+                miss_tokens += remaining_tokens
+
+        return miss_requests, miss_tokens, pending_requests
 
     def make_spec_decoding_stats(
         self,

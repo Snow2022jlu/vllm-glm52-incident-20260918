@@ -172,6 +172,11 @@ class Request:
 
         self.spec_token_ids: list[int] = []
         self.num_computed_tokens = 0
+        # Cache-pressure metrics need to distinguish requests whose prefix-cache
+        # lookup is still pending from requests with a known amount of Prefill
+        # work. This is scheduler-owned state and is never exposed as a label.
+        self.prefill_cache_lookup_complete = False
+        self.prefill_cached_tokens = 0
         self.cache_salt: str | None = cache_salt
 
         # Multi-modal related

@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import asyncio
+from vllm.entrypoints.serve.instrumentator.compatible_native import start_api_pulse
 import contextlib
 import signal
 import socket
@@ -92,6 +93,7 @@ async def serve_http(
 
     loop = asyncio.get_running_loop()
 
+    observation_task = start_api_pulse(server, app.state.engine_client)
     watchdog_task = loop.create_task(watchdog_loop(server, app.state.engine_client))
     server_task = loop.create_task(server.serve(sockets=[sock] if sock else None))
 
@@ -165,6 +167,9 @@ async def serve_http(
     finally:
         shutdown_task.cancel()
         watchdog_task.cancel()
+        if observation_task is not None:
+            observation_task.cancel()
+            await asyncio.gather(observation_task, return_exceptions=True)
 
 
 async def watchdog_loop(server: uvicorn.Server, engine: EngineClient):

@@ -3,6 +3,7 @@
 import gc
 import os
 import queue
+from vllm.entrypoints.serve.instrumentator.isolated_observability import enabled as observation_enabled, observe_core
 import signal
 import threading
 import time
@@ -1400,9 +1401,11 @@ class EngineCoreProc(EngineCore):
 
     def _process_input_queue(self):
         """Exits when an engine step needs to be performed."""
+        observe_core(self)
 
         waited = False
         while not self.has_work() and self.is_running():
+            observe_core(self)
             # Notify callbacks waiting for engine to become idle.
             self._notify_idle_state_callbacks()
             if self.input_queue.empty():
@@ -1414,9 +1417,14 @@ class EngineCoreProc(EngineCore):
                     waited = True
             block = self.process_input_queue_block
             try:
-                req = self.input_queue.get(block=block)
+                req = self.input_queue.get(
+                    block=block,
+                    timeout=0.25 if block and observation_enabled() else None,
+                )
                 self._handle_client_request(*req)
             except queue.Empty:
+                if block and observation_enabled():
+                    continue
                 break
             if not block:
                 break
@@ -1434,6 +1442,7 @@ class EngineCoreProc(EngineCore):
 
         # Step the engine core.
         outputs, model_executed = self.step_fn()
+        observe_core(self, outputs)
         # Put EngineCoreOutputs into the output queue.
         for output in outputs.items() if outputs else ():
             self.output_queue.put_nowait(output)

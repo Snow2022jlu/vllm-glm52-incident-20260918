@@ -1,0 +1,10 @@
+{
+  "tests_run": 26,
+  "failures": 0,
+  "errors": 0,
+  "successful": true,
+  "source_records_verified": 7,
+  "behavior_uses_installed_candidate_files": true,
+  "prometheus_roundtrip_engines": 16,
+  "gpu_or_live_network_executed": false
+}

@@ -1,0 +1,21 @@
+{
+  "candidate": "isolated-health-load-vllm0280-r2",
+  "container_tests_passed": 32,
+  "files": {
+    ".dockerignore": "75dd0348032892236cf707244fd683c2bd757d13dafdae858976c3c88615dfb7",
+    "BUILD_RESULT.md": "a3b3db35b6b38b7cc26d3a20350f2120bd2b5dff274a7f02d19f2fe39af18c3d",
+    "Dockerfile": "9ab0aa7c91cc4980d44dea7354268146c30b680c812a99a0de22e8a6fbefce6a",
+    "README.md": "fc7fef532887c71c2824e173ab40a8e4c54ea887b34056d6bdc7f55fbeb55c79",
+    "collector.py": "4a19e460bf91c0d1e73a3aafdd7af8d09a8f55b31b75eb0b7f6e123945675f26",
+    "image_guard.py": "a3540ed1771a769e861462fedf339c3a9512fabd3e7978bf6847f1a197b18e9d",
+    "install.py": "3e4691f6f1d0d9ff461d6405e613a6bc42c15bb6ec430f538f21bc92bc1b49f0",
+    "observer.py": "60c27f79d3f9cf414f98e80bdba8a732facd6e629366b3493ab5f1c85c6cc039",
+    "test_image_hooks.py": "76ffa9519b4335e764e41824d0c8e95d1a7284dd55341f32b962f992805d35de",
+    "test_observability.py": "342bd3971d3f98e6930548170de7ac03d102d8e8f98a63c910752428827d812d",
+    "verify_image.py": "209ba9320cdfa820312a4d695c45a603717e89e762c1e386202182c66635802a"
+  },
+  "gpu_tested": false,
+  "image_config_id": "sha256:ab4bdeb8ed7ff802706cbe6ea0fcd64621eb7d20d7e2beedb578a56d6f8ffb9d",
+  "live_resources_changed": false,
+  "pushed": false
+}

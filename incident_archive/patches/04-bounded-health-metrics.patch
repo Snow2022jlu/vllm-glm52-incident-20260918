@@ -1,0 +1,334 @@
+diff --git a/vllm/entrypoints/serve/instrumentator/bounded_observability.py b/vllm/entrypoints/serve/instrumentator/bounded_observability.py
+new file mode 100644
+--- /dev/null
++++ b/vllm/entrypoints/serve/instrumentator/bounded_observability.py
+@@ -0,0 +1,169 @@
++"""Bounded health evidence and non-destructive auxiliary process supervision."""
++
++from __future__ import annotations
++
++import contextlib
++import logging
++import math
++import os
++import shutil
++import subprocess
++import sys
++import tempfile
++import threading
++import time
++from pathlib import Path
++
++if __package__:
++    from . import isolated_observability as base
++else:
++    import isolated_observability as base
++
++
++API_GRACE_SECONDS = 1800.0
++FAILURE_FILE = "auxiliary-failure.json"
++LOG = logging.getLogger(__name__)
++
++
++def local_report(observer, protocol):
++    report = base.ObservationState.report(observer)
++    paths = list(observer.directory.glob("api-*.json"))
++    samples = [observer.snapshot(path, math.inf) for path in paths]
++    api_alive = len(paths) == observer.config["api_count"] and all(
++        sample is not None and sample.get("ready") is True
++        and path.name == f'api-{sample["pid"]}.json'
++        for path, sample in zip(paths, samples)
++    )
++    remaining = min((API_GRACE_SECONDS - sample["age_seconds"] for sample in samples
++                     if sample is not None), default=API_GRACE_SECONDS) if api_alive else 0.0
++    auxiliary_failed = (observer.directory / FAILURE_FILE).exists()
++    core_active = report["load_fresh"] and all(
++        sample.get("ready") is True for sample in report["cores"].values()
++    )
++    healthy = bool(core_active and api_alive and remaining > 0 and not auxiliary_failed)
++    responsive = bool(report["ready"] and healthy)
++    if api_alive and remaining <= 0:
++        report["reasons"].append("api_health_grace_expired")
++    if auxiliary_failed:
++        report["reasons"].append("auxiliary_process_failed")
++    lifetime = min((observer.config["core_max_age"] - sample["age_seconds"]
++                    for sample in report["cores"].values()), default=0.0)
++    report.update(
++        compatibility_protocol=protocol, health_ok=healthy, api_alive=bool(api_alive),
++        api_responsive=responsive, ready=responsive,
++        ready_valid_for_seconds=report["ready_valid_for_seconds"] if responsive else 0.0,
++        health_state=("healthy" if responsive else "degraded") if healthy else "unavailable",
++        load_valid_for_seconds=max(0.0, lifetime) if report["load_fresh"] else 0.0,
++        api_health_max_age_seconds=API_GRACE_SECONDS,
++        health_valid_for_seconds=max(0.0, min(remaining, lifetime)) if healthy else 0.0,
++        auxiliary_failed=auxiliary_failed,
++    )
++    return report
++
++
++class AuxiliarySupervisor:
++    def __init__(self, directory):
++        self.directory = Path(directory)
++        self.children = []
++        self.stopped = threading.Event()
++        self.thread = None
++
++    def record_failure(self, errors):
++        LOG.error("Auxiliary observation failure; hold resources and use complete-session control: %s", errors)
++        try:
++            base.atomic_json(self.directory / FAILURE_FILE,
++                             {"errors": errors, "recorded_at": time.monotonic()})
++        except OSError:
++            LOG.exception("Unable to persist auxiliary failure evidence")
++
++    def check(self):
++        errors = []
++        for name, child in self.children:
++            status = child.poll()
++            if status is not None:
++                errors.append(f"{name} pid={child.pid} exited with status={status}")
++        if errors:
++            self.record_failure(errors)
++        return errors
++
++    def monitor(self):
++        while not self.stopped.wait(0.25):
++            try:
++                if self.check():
++                    return
++            except Exception as error:
++                self.record_failure([f"auxiliary monitor failed: {error}"])
++                return
++
++    def start(self):
++        if self.check():
++            raise RuntimeError("Auxiliary process exited before model startup")
++        self.thread = threading.Thread(target=self.monitor, daemon=True,
++                                       name="vllm-observation-supervisor")
++        self.thread.start()
++
++    def close(self, timeout=5.0):
++        self.stopped.set()
++        errors = []
++        if self.thread is not None:
++            self.thread.join(timeout=1.0)
++            if self.thread.is_alive():
++                errors.append("auxiliary monitor did not stop")
++        for name, child in reversed(self.children):
++            try:
++                if child.poll() is None:
++                    child.terminate()
++            except OSError as error:
++                errors.append(f"{name} pid={child.pid} terminate failed: {error}")
++        deadline = time.monotonic() + timeout
++        for name, child in reversed(self.children):
++            try:
++                child.wait(timeout=max(0.0, deadline - time.monotonic()))
++            except (OSError, subprocess.TimeoutExpired) as error:
++                errors.append(f"{name} pid={child.pid} cleanup incomplete: {error}")
++        if errors:
++            self.record_failure(errors)
++            raise RuntimeError(f"Auxiliary cleanup incomplete; retained evidence at {self.directory}: {errors}")
++
++
++@contextlib.contextmanager
++def observation_session(args):
++    if __package__:
++        from . import compatible_runtime as runtime
++    else:
++        import compatible_runtime as runtime
++
++    flag = os.environ.get("VLLM_COMPAT_OBSERVABILITY", "0")
++    if flag not in {"0", "1"}:
++        raise ValueError("VLLM_COMPAT_OBSERVABILITY must be 0 or 1")
++    if flag == "0":
++        with base.observation_session(args):
++            yield
++        return
++    if not base.enabled():
++        raise ValueError("Compatibility requires the isolated EngineCore observation hooks")
++    if os.environ.get("VLLM_OBSERVABILITY_DIRECTORY"):
++        raise ValueError("Refusing to reuse another run's observation directory")
++    original_host, original_port = args.host, args.port
++    directory = tempfile.mkdtemp(prefix="vllm-bounded-", dir="/tmp")
++    supervisor = AuxiliarySupervisor(directory)
++    try:
++        config = runtime.session_config(args, directory)
++        base.atomic_json(Path(directory) / "config.json", config)
++        os.environ["VLLM_OBSERVABILITY_DIRECTORY"] = directory
++        for command, marker in (("local", "observer.json"), ("frontend", "frontend.json")):
++            if command == "frontend" and not config["api_count"]:
++                continue
++            process = subprocess.Popen([sys.executable, str(Path(runtime.__file__).resolve()), command,
++                                        "--directory", directory])
++            supervisor.children.append((command, process))
++            runtime.wait_process(process, Path(directory) / marker)
++        supervisor.start()
++        if config["api_count"]:
++            args.host, args.port = "127.0.0.1", config["backend_port"]
++        yield
++    finally:
++        args.host, args.port = original_host, original_port
++        os.environ.pop("VLLM_OBSERVABILITY_DIRECTORY", None)
++        supervisor.close()
++        shutil.rmtree(directory)
+diff --git a/vllm/entrypoints/serve/instrumentator/compatible_runtime.py b/vllm/entrypoints/serve/instrumentator/compatible_runtime.py
+--- a/vllm/entrypoints/serve/instrumentator/compatible_runtime.py
++++ b/vllm/entrypoints/serve/instrumentator/compatible_runtime.py
+@@ -23,9 +23,11 @@
+ 
+ if __package__:
+     from . import compatible_state as state
++    from . import bounded_observability as bounded
+     from . import isolated_observability as base
+ else:
+     import compatible_state as state
++    import bounded_observability as bounded
+     import isolated_observability as base
+ 
+ 
+@@ -243,6 +245,7 @@
+             "Cache-Control": "no-store", "X-VLLM-Load-Valid-For": str(min(cached[1], view["deadline"]) - now),
+             "X-VLLM-Health-State": view["health_state"], "X-VLLM-API-Responsive": str(int(view["api_responsive"])),
+             "X-VLLM-API-Valid-For": str(max(0.0, view["api_deadline"] - now)),
++            "X-VLLM-Health-Valid-For": str(max(0.0, min(view["health_deadline"], cached[1], view["deadline"]) - now)),
+             "X-VLLM-Native-Snapshot-Age": str(now - cached[2]),
+             "X-VLLM-Model": self.config["model"], "X-VLLM-Role": self.config["role"],
+             "X-VLLM-Epoch": self.config["epoch"],
+@@ -348,41 +351,8 @@
+ 
+ @contextlib.contextmanager
+ def observation_session(args):
+-    flag = os.environ.get("VLLM_COMPAT_OBSERVABILITY", "0")
+-    if flag not in {"0", "1"}:
+-        raise ValueError("VLLM_COMPAT_OBSERVABILITY must be 0 or 1")
+-    if flag == "0":
+-        with base.observation_session(args):
+-            yield
+-        return
+-    if not base.enabled():
+-        raise ValueError("Compatibility requires the isolated EngineCore observation hooks")
+-    if os.environ.get("VLLM_OBSERVABILITY_DIRECTORY"):
+-        raise ValueError("Refusing to reuse another run's observation directory")
+-    original_host, original_port = args.host, args.port
+-    processes = []
+-    with tempfile.TemporaryDirectory(prefix="vllm-compat-", dir="/tmp") as directory:
+-        config = session_config(args, directory)
+-        base.atomic_json(Path(directory) / "config.json", config)
+-        os.environ["VLLM_OBSERVABILITY_DIRECTORY"] = directory
+-        try:
+-            for command, marker in (("local", "observer.json"), ("frontend", "frontend.json")):
+-                if command == "frontend" and not config["api_count"]:
+-                    continue
+-                process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), command,
+-                                            "--directory", directory])
+-                processes.append(process)
+-                wait_process(process, Path(directory) / marker)
+-            if config["api_count"]:
+-                args.host, args.port = "127.0.0.1", config["backend_port"]
+-            yield
+-        finally:
+-            args.host, args.port = original_host, original_port
+-            os.environ.pop("VLLM_OBSERVABILITY_DIRECTORY", None)
+-            for process in reversed(processes):
+-                if process.poll() is None:
+-                    process.terminate()
+-                process.wait(timeout=5)
++    with bounded.observation_session(args):
++        yield
+ 
+ 
+ def main():
+diff --git a/vllm/entrypoints/serve/instrumentator/compatible_state.py b/vllm/entrypoints/serve/instrumentator/compatible_state.py
+--- a/vllm/entrypoints/serve/instrumentator/compatible_state.py
++++ b/vllm/entrypoints/serve/instrumentator/compatible_state.py
+@@ -13,11 +13,13 @@
+ 
+ if __package__:
+     from . import isolated_observability as base
++    from . import bounded_observability as bounded
+ else:
+     import isolated_observability as base
+-
+-
+-PROTOCOL = "vllm-compatible-observability-v1"
++    import bounded_observability as bounded
++
++
++PROTOCOL = "vllm-compatible-observability-v2"
+ MAX_REPORT = 256 * 1024
+ MAX_METRICS = 8 * 1024 * 1024
+ GAUGES = {value: key for key, value in base.METRICS.items()
+@@ -27,29 +29,7 @@
+ 
+ class LocalState(base.ObservationState):
+     def report(self):
+-        report = super().report()
+-        paths = list(self.directory.glob("api-*.json"))
+-        samples = [self.snapshot(path, math.inf) for path in paths]
+-        api_alive = len(paths) == self.config["api_count"] and all(
+-            sample is not None and sample.get("ready") is True
+-            and path.name == f'api-{sample["pid"]}.json'
+-            for path, sample in zip(paths, samples)
+-        )
+-        core_active = report["load_fresh"] and all(
+-            sample.get("ready") is True for sample in report["cores"].values()
+-        )
+-        healthy = core_active and api_alive
+-        lifetime = min((self.config["core_max_age"] - sample["age_seconds"]
+-                        for sample in report["cores"].values()), default=0.0)
+-        report.update(
+-            compatibility_protocol=PROTOCOL,
+-            health_ok=bool(healthy),
+-            api_alive=bool(api_alive),
+-            api_responsive=bool(report["ready"]),
+-            health_state=("healthy" if report["ready"] else "degraded") if healthy else "unavailable",
+-            load_valid_for_seconds=max(0.0, lifetime) if report["load_fresh"] else 0.0,
+-        )
+-        return report
++        return bounded.local_report(self, PROTOCOL)
+ 
+ 
+ def validate_peers(peers, world, local_ranks, local_api_count):
+@@ -141,6 +121,12 @@
+                     raise ValueError("Invalid core sample")
+                 remaining = min(remaining, maximum - sample["age_seconds"])
+             health = report.get("health_ok") is True
++            health_remaining = report.get("health_valid_for_seconds")
++            if (report.get("api_health_max_age_seconds") != bounded.API_GRACE_SECONDS
++                    or not finite_age(health_remaining, bounded.API_GRACE_SECONDS)
++                    or health_remaining > remaining
++                    or health and health_remaining <= 0):
++                raise ValueError("Missing or invalid bounded health deadline")
+             if health and (report.get("live") is not True or report.get("api_alive") is not True
+                            or any(sample.get("ready") is not True for sample in cores.values())):
+                 raise ValueError("Inconsistent positive health")
+@@ -152,7 +138,8 @@
+             deadline = started + remaining
+             if not math.isfinite(started) or started > received or deadline <= received:
+                 raise ValueError("Expired source sample")
+-            self.samples[index] = (report, deadline, min(deadline, started + api_remaining))
++            self.samples[index] = (report, deadline, min(deadline, started + api_remaining),
++                                   min(deadline, started + health_remaining))
+         except (ValueError, TypeError, KeyError):
+             self.samples.pop(index, None)
+             raise
+@@ -163,14 +150,15 @@
+         complete = all(item is not None and item[1] > now for item in current)
+         if not complete:
+             return {"load_fresh": False, "health_ok": False, "api_responsive": False,
+-                    "health_state": "unavailable", "deadline": now, "api_deadline": now, "cores": {}}
++                    "health_state": "unavailable", "deadline": now, "api_deadline": now, "health_deadline": now, "cores": {}}
+         reports = [item[0] for item in current]
+-        healthy = all(report["health_ok"] for report in reports)
+-        responsive = all(item[0]["api_responsive"] and item[2] > now for item in current)
++        healthy = all(item[0]["health_ok"] and item[3] > now for item in current)
++        responsive = healthy and all(item[0]["api_responsive"] and item[2] > now for item in current)
+         return {"load_fresh": True, "health_ok": healthy, "api_responsive": responsive,
+                 "health_state": ("healthy" if responsive else "degraded") if healthy else "unavailable",
+                 "deadline": min(item[1] for item in current),
+                 "api_deadline": min(item[2] for item in current) if responsive else now,
++                "health_deadline": min(item[3] for item in current) if healthy else now,
+                 "cores": {rank: sample for report in reports for rank, sample in report["cores"].items()}}
+ 
+ 

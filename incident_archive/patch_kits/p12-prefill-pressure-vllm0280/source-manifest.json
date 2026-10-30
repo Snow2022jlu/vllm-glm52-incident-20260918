@@ -1,0 +1,47 @@
+{
+  "candidate": "p12-prefill-pressure-vllm0280",
+  "base_version": "0.28.0",
+  "source_review_seal_sha256": "0bdb841d299d6716ca4813ccc01562342e3876935b1ce07c6632adfff727414e",
+  "collector_identical_aliases": [
+    "r102",
+    "r105",
+    "r106"
+  ],
+  "files": [
+    {
+      "path": "sources/vllm-0.28.0/vllm/v1/request.py",
+      "sha256": "0287844f70eeaeb077d714e833a4b449a15e045a6516f8530182e357a5bec82f",
+      "source": "vllm_pd/audits/20260905_patch_review/reviews/P12-prefill-pressure/sources/vllm-0.28.0/vllm/v1/request.py"
+    },
+    {
+      "path": "sources/vllm-0.28.0/vllm/v1/metrics/stats.py",
+      "sha256": "7682d3086bf5395f163f423677485432ee2c035aada2f370c0f82b291e53ca47",
+      "source": "vllm_pd/audits/20260905_patch_review/reviews/P12-prefill-pressure/sources/vllm-0.28.0/vllm/v1/metrics/stats.py"
+    },
+    {
+      "path": "sources/vllm-0.28.0/vllm/v1/metrics/loggers.py",
+      "sha256": "d5a91626cf79118f98ae6438c842cb30fc44ca14463c7e2af5871e3da8e51bcf",
+      "source": "vllm_pd/audits/20260905_patch_review/reviews/P12-prefill-pressure/sources/vllm-0.28.0/vllm/v1/metrics/loggers.py"
+    },
+    {
+      "path": "sources/vllm-0.28.0/vllm/v1/core/sched/scheduler.py",
+      "sha256": "4b79ab760c3864af6838d555c01335deea3aac97c9be2be415fa0e5dab32f07e",
+      "source": "vllm_pd/audits/20260905_patch_review/reviews/P12-prefill-pressure/sources/vllm-0.28.0/vllm/v1/core/sched/scheduler.py"
+    },
+    {
+      "path": "sources/installer.py",
+      "sha256": "e0d4449b67000fa1a2fceec5c4210fd6a391b54060e3d335cad3b5e36ea43f98",
+      "source": "vllm_pd/audits/20260905_patch_review/reviews/P12-prefill-pressure/sources/installer.py"
+    },
+    {
+      "path": "sources/collectors/r106.py",
+      "sha256": "771f57ea78ebe8b8a66ac6d0a51acfa60bc3e6c9e47cd71c7c43eb608f4494ce",
+      "source": "vllm_pd/audits/20260905_patch_review/reviews/P12-prefill-pressure/sources/collectors/r106.py"
+    },
+    {
+      "path": "sources/vllm-0.28.0/vllm/v1/metrics/utils.py",
+      "sha256": "3146bb1215074a18067fda14df7664e341fffb073aaaaee735cd4f81ed3b1cf2",
+      "source": "https://raw.githubusercontent.com/vllm-project/vllm/v0.28.0/vllm/v1/metrics/utils.py"
+    }
+  ]
+}

@@ -510,6 +510,45 @@ class PrometheusStatLogger(AggregateStatLoggerBase):
             gauge_scheduler_waiting, per_engine_labelvalues
         )
 
+        gauge_prefill_cache_miss_requests = self._gauge_cls(
+            name="vllm:prefill_cache_miss_requests",
+            documentation=(
+                "Number of active requests with a completed cache lookup and "
+                "remaining uncached Prefill work on this KV producer."
+            ),
+            multiprocess_mode="mostrecent",
+            labelnames=labelnames,
+        )
+        self.gauge_prefill_cache_miss_requests = create_metric_per_engine(
+            gauge_prefill_cache_miss_requests, per_engine_labelvalues
+        )
+
+        gauge_prefill_cache_miss_tokens = self._gauge_cls(
+            name="vllm:prefill_cache_miss_tokens",
+            documentation=(
+                "Remaining uncached Prefill tokens, including in-flight work, "
+                "on this KV producer."
+            ),
+            multiprocess_mode="mostrecent",
+            labelnames=labelnames,
+        )
+        self.gauge_prefill_cache_miss_tokens = create_metric_per_engine(
+            gauge_prefill_cache_miss_tokens, per_engine_labelvalues
+        )
+
+        gauge_prefill_cache_pending_requests = self._gauge_cls(
+            name="vllm:prefill_cache_pending_requests",
+            documentation=(
+                "Number of active Prefill requests whose cache lookup has not "
+                "completed on this KV producer."
+            ),
+            multiprocess_mode="mostrecent",
+            labelnames=labelnames,
+        )
+        self.gauge_prefill_cache_pending_requests = create_metric_per_engine(
+            gauge_prefill_cache_pending_requests, per_engine_labelvalues
+        )
+
         gauge_waiting_by_reason = self._gauge_cls(
             name="vllm:num_requests_waiting_by_reason",
             documentation=(
@@ -1114,6 +1153,15 @@ class PrometheusStatLogger(AggregateStatLoggerBase):
                 + scheduler_stats.num_skipped_waiting_reqs
             )
             self.gauge_scheduler_waiting[engine_idx].set(total_waiting)
+            self.gauge_prefill_cache_miss_requests[engine_idx].set(
+                scheduler_stats.prefill_cache_miss_requests
+            )
+            self.gauge_prefill_cache_miss_tokens[engine_idx].set(
+                scheduler_stats.prefill_cache_miss_tokens
+            )
+            self.gauge_prefill_cache_pending_requests[engine_idx].set(
+                scheduler_stats.prefill_cache_pending_requests
+            )
             self.gauge_waiting_by_reason[WAITING_REASON_CAPACITY][engine_idx].set(
                 scheduler_stats.num_waiting_reqs
             )

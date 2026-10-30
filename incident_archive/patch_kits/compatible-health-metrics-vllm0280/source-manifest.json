@@ -1,0 +1,23 @@
+{
+  "candidate": "v028-p12-mc0313post1-compat-20260908-r3",
+  "gpu_tested": false,
+  "live_resources_changed": false,
+  "local_image_config_id": "sha256:069f0f5021e8bd435b0b022e81021d0678abcc29bb29311f278228cf08104032",
+  "pushed": false,
+  "source_files": {
+    ".dockerignore": "6163e6f76be9c0f1f8136e9535bd4a1e2a03765d0049eb895a2e17155a0e0731",
+    "BUILD_RESULT.md": "d8744309bd284aa6278af43061a26cb0c91bcb9002ff37f4f9af1063d7517d0b",
+    "Dockerfile": "fadcc96822009612a81e799e0e12149e74b91ffea56287055b41900e86dc7d27",
+    "README.md": "2feadd632e3fe60ea7e3c667ed01a6d7ddcb76af6f7d03cd9f02e46303abd8ce",
+    "compatible_native.py": "aa2118e25d0545c7be28e4002bfc0bfa631ce6a852b7fb943d30de4a0ecb606e",
+    "compatible_runtime.py": "24dd7cb20f874b8e6a7223593cf9d29843f974e04bad4d49f621d1efd5400621",
+    "compatible_state.py": "c483ac6f7ab7e6bd98385662f447f9a657e9cd6d70fe93c97c97247e5e9a728b",
+    "fault_workers.py": "d9a7949033c055d2e6654cbc1ebb08612342e8c5d91af95b412529d81a63ab39",
+    "image_guard.py": "46cadbbdb1d91fb78232401bd873cb7b5d9d676970ae11988be3a44e85257b3e",
+    "install.py": "42f618035e2dcb81a3335aec5e04829f98f10f69fe91556ea8bb64aa387bd634",
+    "static_dp_registrar.py": "75ced3e9544379e39981b80f1162bd710e753ad72bcd6c3eb4d3beddcae1005b",
+    "test_compatibility.py": "3ec99619fd3416096755c7de35cfe649d5254d29d1627e25d298b774b61e8ec2",
+    "test_process_isolation.py": "92131d3c3fbd45839961524c577470d2dcced393d294df910a78e87d81dc5a52",
+    "verify_image.py": "4ada2e52e9603adb2e52d2825eef30da7a21e921f8e0a695c2b36182e076bd54"
+  }
+}

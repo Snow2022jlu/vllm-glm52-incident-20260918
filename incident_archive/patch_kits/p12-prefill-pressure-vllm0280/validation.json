@@ -1,0 +1,22 @@
+{
+  "candidate": "p12-prefill-pressure-vllm0280",
+  "python": "3.13.2",
+  "prometheus_client": "0.21.1",
+  "source_records_verified": 7,
+  "python312_ast_files": 16,
+  "runtime_payloads_verified": 4,
+  "collector_payloads_verified": 1,
+  "tests_passed": 26,
+  "independent_test_results_identical": true,
+  "partial_installation_states_tested": 32,
+  "prometheus_roundtrip_engines": 16,
+  "source_patch_application_matches_payloads": true,
+  "upstream_ast_preserved_after_removing_p12": true,
+  "pr54651_runtime_files_disjoint": true,
+  "prior_p12_sealed_records_verified": 32,
+  "unselected_inventory_unchanged": true,
+  "global_inventory_unchanged": true,
+  "next_review": "P21",
+  "deployed": false,
+  "gpu_or_live_service_test_executed": false
+}

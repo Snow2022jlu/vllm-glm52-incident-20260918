@@ -1,0 +1,43 @@
+{
+  "checked_at_utc": "2026-10-30T04:09:39.817761+00:00",
+  "runtime_file_hash_checks": {
+    "passed": 12
+  },
+  "incident_source_hash_checks": {
+    "passed": 20,
+    "overlaps_runtime_files": true
+  },
+  "patch_replay": {
+    "passed": 4,
+    "baseline_tag": "upstream-v0.28.0"
+  },
+  "p12_cpu_regression": {
+    "passed": 26,
+    "failed": 0,
+    "skipped": 0,
+    "python": "3.12.3",
+    "prometheus_client": "0.26.0"
+  },
+  "bounded_compat_cpu_regression": {
+    "passed": 70,
+    "failed": 0,
+    "skipped": 0,
+    "image_config_id": "sha256:1896c25a15b71b43820ad4ea5b8dd1e019aadeb57be48b9f065e534149440909",
+    "network": "none",
+    "gpu_devices": 0,
+    "read_only_root": true
+  },
+  "public_export_scan": {
+    "files_checked": 58,
+    "credential_and_internal_endpoint_patterns_detected": 0,
+    "scope": "incident_archive additions; upstream is an unchanged public source snapshot"
+  },
+  "limitations": [
+    "Dockerfile supplied but not built in this export",
+    "No GPU/model/RDMA/performance testing performed for this export",
+    "No post-incident Mooncake lifetime fixes included"
+  ],
+  "setup_attempts": [
+    "First CPU container command failed before tests because uv cache was read-only; rerun used writable temporary cache and all 70 tests passed"
+  ]
+}
